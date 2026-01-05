@@ -1,21 +1,21 @@
-# plivo-streaming-node
+# plivo-stream-sdk-node
 
 A Node.js SDK for handling Plivo real-time media streaming over WebSocket. Built on top of `ws` WebSocketServer.
 
 ## Installation
 
 ```bash
-npm install plivo-streaming-node
+npm install plivo-stream-sdk-node
 # or
-bun install plivo-streaming-node
+bun install plivo-stream-sdk-node
 ```
 
 ## Quick Start
 
 ```typescript
 import express from 'express';
-import PlivoWebSocketServer from 'plivo-streaming-node';
-import type { StartEvent, MediaEvent, DTMFEvent } from 'plivo-streaming-node';
+import PlivoWebSocketServer from 'plivo-stream-sdk-node';
+import type { StartEvent, MediaEvent, DTMFEvent } from 'plivo-stream-sdk-node';
 
 const app = express();
 const PORT = 8000;
@@ -250,7 +250,7 @@ import type {
   ClearAudioEvent,
   IncomingEventEnum,
   OutgoingEventEnum,
-} from 'plivo-streaming-node';
+} from 'plivo-stream-sdk-node';
 ```
 
 ---
