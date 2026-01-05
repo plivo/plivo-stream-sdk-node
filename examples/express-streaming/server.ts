@@ -7,6 +7,7 @@ import { OpenAI } from 'openai';
 import { config } from 'dotenv';
 import { TextToSpeechStreamRequestOutputFormat } from '@elevenlabs/elevenlabs-js/api';
 import type { WebSocket as WebSocketType } from 'ws';
+import * as Plivo from 'plivo';
 
 config();
 const app = express();
@@ -76,14 +77,19 @@ async function addMessageAndGetResponse(message: string) {
 // Plivo webhook endpoint
 app.get('/stream', (req, res) => {
   const streamUrl = `wss://${req.get('host')}/stream`;
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Speak>Hello world!</Speak>
-    <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">
-    ${streamUrl}
-    </Stream>
-</Response>`;
-
+  const plivoResponse = new (Plivo as any).Response();
+  plivoResponse.addSpeak('Hello world!');
+  const params = {
+    contentType: 'audio/x-mulaw;rate=8000',
+    keepCallAlive: true,
+    bidirectional: true,
+  };
+  plivoResponse.addStream(streamUrl, params);
+  res.header('Content-Type', 'application/xml');
+  res.header('Content-Length', plivoResponse.toString().length.toString());
+  res.header('Connection', 'keep-alive');
+  res.header('Keep-Alive', 'timeout=60');
+  const xml = plivoResponse.toXML();
   res.type('application/xml');
   res.send(xml);
 });

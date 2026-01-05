@@ -16,6 +16,7 @@
     "express": "^4.18.2",
     "node-vad": "^1.1.4",
     "openai": "^6.10.0",
+    "plivo": "^4.75.3",
     "plivo-streaming-node": "file:../..",
     "ws": "^8.14.2"
   },
