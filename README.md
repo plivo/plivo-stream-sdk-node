@@ -16,6 +16,7 @@ bun install plivo-stream-sdk-node
 import express from 'express';
 import PlivoWebSocketServer from 'plivo-stream-sdk-node';
 import type { StartEvent, MediaEvent, DTMFEvent } from 'plivo-stream-sdk-node';
+import * as Plivo from 'plivo';
 
 const app = express();
 const PORT = 8000;
@@ -23,14 +24,21 @@ const PORT = 8000;
 // Plivo webhook endpoint - returns XML to initiate streaming
 app.get('/stream', (req, res) => {
   const streamUrl = `wss://${req.get('host')}/stream`;
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Speak>Hello!</Speak>
-    <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-l16;rate=16000">
-    ${streamUrl}
-    </Stream>
-</Response>`;
-  res.type('application/xml').send(xml);
+  const plivoResponse = new (Plivo as any).Response();
+  plivoResponse.addSpeak('Hello world!');
+  const params = {
+    contentType: 'audio/x-mulaw;rate=8000',
+    keepCallAlive: true,
+    bidirectional: true,
+  };
+  plivoResponse.addStream(streamUrl, params);
+  res.header('Content-Type', 'application/xml');
+  res.header('Content-Length', plivoResponse.toString().length.toString());
+  res.header('Connection', 'keep-alive');
+  res.header('Keep-Alive', 'timeout=60');
+  const xml = plivoResponse.toXML();
+  res.type('application/xml');
+  res.send(xml);
 });
 
 // Start HTTP server
@@ -130,7 +138,7 @@ Send audio to a specific connection.
 
 ```typescript
 // payload can be Buffer, Uint8Array, or ArrayBuffer
-plivoServer.playAudio(ws, 'audio/x-l16', 16000, audioBuffer);
+plivoServer.playAudio(ws, 'audio/x-mulaw', 8000, audioBuffer);
 ```
 
 ##### `checkpoint(ws, name)`
