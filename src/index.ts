@@ -186,7 +186,6 @@ class PlivoWebSocketServer extends WebSocketServer {
 
       switch (data.event) {
         case 'start':
-          console.log('start event', data);
           const startEvent = StartEventSchema.parse(data);
           metadata.streamId = startEvent.start.streamId;
           metadata.accountId = startEvent.start.accountId;
@@ -202,7 +201,6 @@ class PlivoWebSocketServer extends WebSocketServer {
           break;
 
         case 'dtmf':
-          this.dtmfCallbacks.forEach((cb) => cb(data as DTMFEvent, ws));
           const dtmfEvent = DTMFEventSchema.parse(data);
           this.dtmfCallbacks.forEach((cb) => cb(dtmfEvent, ws));
           break;
