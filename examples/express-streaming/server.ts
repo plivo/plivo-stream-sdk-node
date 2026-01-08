@@ -69,9 +69,9 @@ async function addMessageAndGetResponse(message: string) {
   }
   messages.push({
     role: 'assistant',
-    content: response.choices[0].message.content,
+    content: response?.choices?.[0]?.message?.content,
   });
-  return response.choices[0].message.content;
+  return response?.choices?.[0]?.message?.content;
 }
 
 // Plivo webhook endpoint
@@ -197,8 +197,8 @@ plivoServer
     await waitForDeepgramConnectionToOpen(deepgramClient);
 
     deepgramClient.on(LiveTranscriptionEvents.Transcript, async (data: LiveTranscriptionEvent) => {
-      const transcription = data.channel.alternatives[0].transcript;
-      if (transcription.trim().length > 0) {
+      const transcription = data?.channel?.alternatives?.[0]?.transcript;
+      if (transcription && transcription.trim().length > 0) {
         console.log('🎤 Transcript:', transcription);
         const completion = await addMessageAndGetResponse(transcription);
         console.log('🤖 Completion:', completion);

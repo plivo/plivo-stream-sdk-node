@@ -9,7 +9,7 @@ import type {
   PlayAudioEvent,
   CheckpointEvent,
   ClearAudioEvent,
-} from './types';
+} from './types.js';
 import { validateV3Signature } from 'plivo';
 import {
   ClearedAudioEventSchema,
@@ -17,6 +17,28 @@ import {
   MediaEventSchema,
   PlayedStreamEventSchema,
   StartEventSchema,
+} from './types.js';
+
+// Re-export types for consumers
+export type {
+  StartEvent,
+  MediaEvent,
+  DTMFEvent,
+  PlayedStreamEvent,
+  ClearedAudioEvent,
+  PlayAudioEvent,
+  CheckpointEvent,
+  ClearAudioEvent,
+} from './types.js';
+
+export {
+  IncomingEventEnum,
+  OutgoingEventEnum,
+  StartEventSchema,
+  MediaEventSchema,
+  DTMFEventSchema,
+  PlayedStreamEventSchema,
+  ClearedAudioEventSchema,
 } from './types';
 
 export interface PlivoWebSocketServerOptions extends ServerOptions {
@@ -406,4 +428,5 @@ class PlivoWebSocketServer extends WebSocketServer {
   }
 }
 
+export { PlivoWebSocketServer };
 export default PlivoWebSocketServer;
