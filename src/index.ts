@@ -1,5 +1,6 @@
 import { WebSocketServer, type ServerOptions, type WebSocket as WebSocketType } from 'ws';
 import type { IncomingMessage } from 'http';
+import { createHmac, timingSafeEqual } from 'crypto';
 import type {
   StartEvent,
   MediaEvent,
@@ -10,7 +11,6 @@ import type {
   CheckpointEvent,
   ClearAudioEvent,
 } from './types.js';
-import { validateV3Signature } from 'plivo';
 import {
   ClearedAudioEventSchema,
   DTMFEventSchema,
@@ -90,6 +90,24 @@ function decodePath(path: string): string {
   } catch {
     return path;
   }
+}
+
+// The decoded query sorted by key as k=v pairs joined with '&', first value of a repeated key, not re-encoded.
+function canonicalQuery(query: string): string {
+  const values = new Map<string, string>();
+  for (const [key, value] of new URLSearchParams(query)) {
+    if (!values.has(key)) {
+      values.set(key, value);
+    }
+  }
+  const pairs = [...values.keys()].sort().map((key) => `${key}=${values.get(key)}`);
+  return pairs.length > 0 ? `?${pairs.join('&')}` : '';
+}
+
+function signatureMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 class PlivoWebSocketServer extends WebSocketServer {
@@ -223,11 +241,11 @@ class PlivoWebSocketServer extends WebSocketServer {
     const url = request.url || '/';
     const queryStart = url.indexOf('?');
     const rawPath = queryStart === -1 ? url : url.slice(0, queryStart);
-    const query = queryStart === -1 ? '' : url.slice(queryStart);
+    const query = queryStart === -1 ? '' : canonicalQuery(url.slice(queryStart + 1));
     const path = decodePath(rawPath);
 
-    // Plivo signs the stream URL as configured: ws/wss, host[:port], URL-decoded path, query.
-    // The query is passed encoded; validateV3Signature decodes and sorts it.
+    // Plivo signs the stream URL as configured: ws/wss, host[:port], URL-decoded path, canonical query.
+    // Same rule as Plivo's signatures on HTTP GET callbacks.
     const uris = [`${base}${path}${query}`];
     // The request path is at least '/', but a stream URL configured without a path is signed without it.
     if (path === '/') {
@@ -238,13 +256,11 @@ class PlivoWebSocketServer extends WebSocketServer {
       uris.push(`${base.replace(/^[a-z]+:\/\//i, 'http://')}${rawPath}`);
     }
 
-    try {
-      // Coerce Boolean wrapper to primitive boolean
-      return uris.some((uri) => !!validateV3Signature(request.method ?? 'GET', uri, nonce, this.authToken!, signature));
-    } catch (error) {
-      console.error('[PlivoWebSocketServer] Signature validation error:', error);
-      return false;
-    }
+    const expected = uris.map((uri) => createHmac('sha256', this.authToken!).update(`${uri}.${nonce}`).digest('base64'));
+    // The header holds two comma-separated signatures while the auth token is being rotated.
+    return signature
+      .split(',')
+      .some((provided) => expected.some((candidate) => signatureMatches(provided.trim(), candidate)));
   }
 
   private handleIncomingEvent(data: any, ws: WebSocketType) {

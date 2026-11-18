@@ -48,6 +48,19 @@ describe('validateConnectionSignature', () => {
     expect(validate(createServer(), url, signature, tls)).toBe(true);
   });
 
+  // Strings as signed by Plivo's server-side signing code.
+  test.each([
+    ['repeated key, first value signed', '/s?a=2&a=1', 'wss://example.com/s?a=2'],
+    ['repeated key, already in order', '/s?a=1&a=2', 'wss://example.com/s?a=1'],
+    ['repeated key with other keys', '/s?b=1&a=x+y&a=z', 'wss://example.com/s?a=x y&b=1'],
+    ['non-ASCII path and query', '/caf%C3%A9?x=%C3%A9', 'wss://example.com/café?x=é'],
+    ['key without a value', '/s?a', 'wss://example.com/s?a='],
+    ['empty pair', '/s?a=1&&b=2', 'wss://example.com/s?a=1&b=2'],
+    ['empty query', '/s?', 'wss://example.com/s'],
+  ])('accepts %s', (_, url, signed) => {
+    expect(validate(createServer(), url, sign(signed), tls)).toBe(true);
+  });
+
   test('accepts wss with port', () => {
     const signature = 'd4mqJrd9gtwO+Dfc7IT4u144WmmoPrnCjYUTmM3HBSk=';
     expect(validate(createServer(), '/ws/?b=2&a=1', signature, { ...tls, host: 'example.com:8443' })).toBe(true);
