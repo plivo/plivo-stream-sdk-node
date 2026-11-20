@@ -96,7 +96,7 @@ Extends `WebSocketServer` from the `ws` package.
 #### Constructor
 
 ```typescript
-new PlivoWebSocketServer(options: ServerOptions, callback?: () => void)
+new PlivoWebSocketServer(options: PlivoWebSocketServerOptions, callback?: () => void)
 ```
 
 Standard `ws` ServerOptions. Common options:
@@ -104,6 +104,25 @@ Standard `ws` ServerOptions. Common options:
 - `server`: HTTP/HTTPS server to attach to
 - `path`: URL path for WebSocket connections (e.g., `'/stream'`)
 - `port`: Port to listen on (if not attaching to existing server)
+
+Signature validation options:
+
+- `validateSignature` (default `false`): validate the `X-Plivo-Signature-V3` header on each connection; invalid connections are closed with code `1008`
+- `authToken`: your Plivo auth token, required when `validateSignature` is `true`
+- `publicUrl` (optional): public base URL of your stream endpoint as set in your `<Stream>` XML, e.g. `wss://example.com`. Set it when a proxy in front of the server changes the scheme, host or path prefix. Without it, the URL is rebuilt from the request's Host header, using `wss` if `x-forwarded-proto` is `https` (or, without that header, if the connection uses TLS)
+- `allowLegacySignature` (default `true`): also accept the signature format Plivo used before 23 Nov 2026 (see below). Transitional; it will be removed in a future release
+
+From 23 Nov 2026, Plivo signs the stream URL as configured (`ws`/`wss`, host and port, path and sorted query) instead of `http://host/path`. Upgrade to 1.1.0 or later before that date if you use `validateSignature`; earlier versions reject these connections.
+
+```typescript
+const plivoServer = new PlivoWebSocketServer({
+  server,
+  path: '/stream',
+  validateSignature: true,
+  authToken: process.env.PLIVO_AUTH_TOKEN!,
+  publicUrl: 'wss://example.com', // only needed behind a proxy
+});
+```
 
 #### Lifecycle Methods
 

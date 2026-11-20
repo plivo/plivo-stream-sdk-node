@@ -1,5 +1,6 @@
 import { WebSocketServer, type ServerOptions, type WebSocket as WebSocketType } from 'ws';
 import type { IncomingMessage } from 'http';
+import { createHmac, timingSafeEqual } from 'crypto';
 import type {
   StartEvent,
   MediaEvent,
@@ -10,7 +11,6 @@ import type {
   CheckpointEvent,
   ClearAudioEvent,
 } from './types.js';
-import { validateV3Signature } from 'plivo';
 import {
   ClearedAudioEventSchema,
   DTMFEventSchema,
@@ -52,6 +52,18 @@ export interface PlivoWebSocketServerOptions extends ServerOptions {
    * Required if `validateSignature` is true.
    */
   authToken?: string;
+  /**
+   * Public base URL of the stream endpoint as configured in your Plivo `<Stream>` XML, e.g. `wss://example.com`.
+   * The request path and query are appended to it to rebuild the URL Plivo signed. Set this when a proxy in
+   * front of the server changes the scheme, host or path prefix. If omitted, the URL is derived from the request:
+   * the Host header, and `x-forwarded-proto` (https/wss -> wss), else the socket's TLS state, to pick ws or wss.
+   */
+  publicUrl?: string;
+  /**
+   * Also accept the legacy V3 signature (`http://host/path`, query dropped) that Plivo used before
+   * 23 Nov 2026. Defaults to true. Transitional: this option will be removed in a future release.
+   */
+  allowLegacySignature?: boolean;
 }
 
 interface ConnectionMetadata {
@@ -63,11 +75,48 @@ interface ConnectionMetadata {
 
 export type ConnectionCallback = (ws: WebSocketType, request: IncomingMessage) => void | Promise<void>;
 
+function streamScheme(request: IncomingMessage): 'ws' | 'wss' {
+  const forwarded = request.headers['x-forwarded-proto'];
+  const proto = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim().toLowerCase();
+  if (proto) {
+    return proto === 'https' || proto === 'wss' ? 'wss' : 'ws';
+  }
+  return (request.socket as any).encrypted ? 'wss' : 'ws';
+}
+
+function decodePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+// The decoded query sorted by key as k=v pairs joined with '&', first value of a repeated key, not re-encoded.
+function canonicalQuery(query: string): string {
+  const values = new Map<string, string>();
+  for (const [key, value] of new URLSearchParams(query)) {
+    if (!values.has(key)) {
+      values.set(key, value);
+    }
+  }
+  const pairs = [...values.keys()].sort().map((key) => `${key}=${values.get(key)}`);
+  return pairs.length > 0 ? `?${pairs.join('&')}` : '';
+}
+
+function signatureMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 class PlivoWebSocketServer extends WebSocketServer {
   private isStarted = false;
   private connectionMetadata = new WeakMap<WebSocketType, ConnectionMetadata>();
   private readonly validateSignatureEnabled: boolean;
   private readonly authToken?: string;
+  private readonly publicUrl?: string;
+  private readonly allowLegacySignature: boolean;
 
   // Pre-registered callbacks
   private connectionCallbacks: ConnectionCallback[] = [];
@@ -80,11 +129,13 @@ class PlivoWebSocketServer extends WebSocketServer {
   private closeCallbacks: Array<(ws: WebSocketType) => void> = [];
 
   constructor(options: PlivoWebSocketServerOptions, callback?: () => void) {
-    const { validateSignature, authToken, ...wsOptions } = options;
+    const { validateSignature, authToken, publicUrl, allowLegacySignature, ...wsOptions } = options;
     super(wsOptions, callback);
 
     this.validateSignatureEnabled = validateSignature ?? false;
     this.authToken = authToken;
+    this.publicUrl = publicUrl?.replace(/\/+$/, '');
+    this.allowLegacySignature = allowLegacySignature ?? true;
 
     if (this.validateSignatureEnabled && !this.authToken) {
       throw new Error('authToken is required when validateSignature is enabled');
@@ -178,7 +229,6 @@ class PlivoWebSocketServer extends WebSocketServer {
   }
 
   private validateConnectionSignature(request: IncomingMessage): boolean {
-    console.log('validateConnectionSignature', request.headers);
     const signature = request.headers['x-plivo-signature-v3'] as string | undefined;
     const nonce = request.headers['x-plivo-signature-v3-nonce'] as string | undefined;
 
@@ -187,19 +237,30 @@ class PlivoWebSocketServer extends WebSocketServer {
       return false;
     }
 
-    // Construct the full URI from the request
-    const host = request.headers.host || '';
-    const protocol = (request.socket as any).encrypted ? 'https' : 'http';
-    const uri = `${protocol}://${host}${request.url || '/'}`;
+    const base = this.publicUrl ?? `${streamScheme(request)}://${request.headers.host || ''}`;
+    const url = request.url || '/';
+    const queryStart = url.indexOf('?');
+    const rawPath = queryStart === -1 ? url : url.slice(0, queryStart);
+    const query = queryStart === -1 ? '' : canonicalQuery(url.slice(queryStart + 1));
+    const path = decodePath(rawPath);
 
-    try {
-      // Coerce Boolean wrapper to primitive boolean
-      console.log('validateV3Signature', request.method ?? 'GET', uri, nonce, this.authToken!, signature);
-      return !!validateV3Signature(request.method ?? 'GET', uri, nonce, this.authToken!, signature);
-    } catch (error) {
-      console.error('[PlivoWebSocketServer] Signature validation error:', error);
-      return false;
+    // Plivo signs the stream URL as configured: ws/wss, host[:port], URL-decoded path, canonical query.
+    // Same rule as Plivo's signatures on HTTP GET callbacks.
+    const uris = [`${base}${path}${query}`];
+    // The request path is at least '/', but a stream URL configured without a path is signed without it.
+    if (path === '/') {
+      uris.push(`${base}${query}`);
     }
+    if (this.allowLegacySignature) {
+      // Legacy form signed before 23 Nov 2026: scheme forced to http, query dropped.
+      uris.push(`${base.replace(/^[a-z]+:\/\//i, 'http://')}${rawPath}`);
+    }
+
+    const expected = uris.map((uri) => createHmac('sha256', this.authToken!).update(`${uri}.${nonce}`).digest('base64'));
+    // The header holds two comma-separated signatures while the auth token is being rotated.
+    return signature
+      .split(',')
+      .some((provided) => expected.some((candidate) => signatureMatches(provided.trim(), candidate)));
   }
 
   private handleIncomingEvent(data: any, ws: WebSocketType) {
